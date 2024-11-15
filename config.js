@@ -5,6 +5,6 @@ module.exports = {
     MODEL: "gpt-3.5-turbo",
     MAX_TOKENS: 800,
     TEMPERATURE: 0.7,
-    STATE_ABBREVIATIONS: ['NJ', 'NY', 'CA'], // Add your desired state abbreviations here
+    STATE_ABBREVIATIONS: ['NJ', 'NY', 'CA'],
     OUTPUT_DIR: 'output' // Default output directory
 };

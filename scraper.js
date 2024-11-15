@@ -8,6 +8,9 @@ const { URL } = require('url');
 const cliProgress = require('cli-progress');
 const colors = require('colors');
 const config = require('./config');
+const yargs = require('yargs/yargs');
+const { hideBin } = require('yargs/helpers');
+const argv = yargs(hideBin(process.argv)).argv;
 
 const exclusionFilePath = 'exclusions.txt'; // Path to the exclusion file
 
@@ -39,7 +42,7 @@ const openai = new OpenAI({
 const MAX_WORKERS = config.MAX_WORKERS;
 const RATE_LIMIT_DELAY = config.RATE_LIMIT_DELAY;
 const stateAbbreviations = config.STATE_ABBREVIATIONS;
-const outputDir = config.OUTPUT_DIR || 'output';
+const outputDir = argv.outputDir || config.OUTPUT_DIR;
 
 // Validate configuration values
 if (typeof MAX_WORKERS !== 'number' || MAX_WORKERS <= 0) {

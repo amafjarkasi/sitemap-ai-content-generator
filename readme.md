@@ -92,8 +92,6 @@ For each processed sitemap, creates a directory `output/{domain}_{timestamp}/` c
 - `{keyword}_{timestamp}.txt` - Generated articles
 - `summary_{timestamp}.txt` - Processing summary
 
-These changes will allow users to specify a custom output directory and improve the overall functionality and usability of the script.
-
 ## Exclusion File
 
 Create an `exclusions.txt` file with keywords to exclude (one per line):
@@ -109,6 +107,7 @@ keyword3
 - `getTimestamp` - Generates timestamp for file naming
 - `createProgressBar` - Creates progress visualization
 - `isValidKeyword` - Validates extracted keywords
+- `containsStateAbbreviation` - Checks if a phrase contains a state abbreviation
 - `processSitemap` - Main sitemap processing logic
 - `generateArticle` - OpenAI article generation
 - `main` - Orchestrates the entire process
