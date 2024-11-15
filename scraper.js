@@ -9,6 +9,11 @@ const cliProgress = require('cli-progress');
 const colors = require('colors');
 const config = require('./config');
 
+// Ensure OpenAI API key is set
+if (!process.env.OPENAI_API_KEY) {
+    throw new Error('OpenAI API key is not set. Please set it in the .env file.');
+}
+
 const openai = new OpenAI({
     apiKey: process.env.OPENAI_API_KEY
 });
@@ -16,11 +21,25 @@ const openai = new OpenAI({
 const MAX_WORKERS = config.MAX_WORKERS;
 const RATE_LIMIT_DELAY = config.RATE_LIMIT_DELAY;
 const stateAbbreviations = config.STATE_ABBREVIATIONS;
+const outputDir = config.OUTPUT_DIR || 'output';
 
+// Validate configuration values
+if (typeof MAX_WORKERS !== 'number' || MAX_WORKERS <= 0) {
+    throw new Error('Invalid MAX_WORKERS value in config.js');
+}
+if (typeof RATE_LIMIT_DELAY !== 'number' || RATE_LIMIT_DELAY <= 0) {
+    throw new Error('Invalid RATE_LIMIT_DELAY value in config.js');
+}
+if (!Array.isArray(stateAbbreviations) || stateAbbreviations.length === 0) {
+    throw new Error('Invalid STATE_ABBREVIATIONS value in config.js');
+}
+
+// Generate a timestamp for file naming
 function getTimestamp() {
     return new Date().toISOString().replace(/[:.]/g, '-');
 }
 
+// Create a progress bar for a given domain
 function createProgressBar(domain) {
     return new cliProgress.SingleBar({
         format: colors.magenta(`${domain} |{bar}| {percentage}%`),
@@ -30,23 +49,26 @@ function createProgressBar(domain) {
     }, cliProgress.Presets.shades_classic);
 }
 
+// Validate if a keyword is valid (at least two words)
 function isValidKeyword(keyword) {
     const words = keyword.split(' ').filter(word => word.trim());
     return words.length >= 2;
 }
 
+// Check if a phrase contains a state abbreviation
 function containsStateAbbreviation(phrase) {
     return stateAbbreviations.some(state => phrase.endsWith(state));
 }
 
+// Process a sitemap URL and extract keywords and phrases
 async function processSitemap(sitemapUrl) {
     const domain = new URL(sitemapUrl).hostname;
     const timestamp = getTimestamp();
-    const outputDir = path.join('output', `${domain}_${timestamp}`);
+    const domainOutputDir = path.join(outputDir, `${domain}_${timestamp}`);
     let randomKeyword = 'None';
     
     try {
-        await fs.mkdir(outputDir, { recursive: true });
+        await fs.mkdir(domainOutputDir, { recursive: true });
         
         const response = await axios.get(sitemapUrl);
         const parser = new xml2js.Parser();
@@ -82,20 +104,20 @@ async function processSitemap(sitemapUrl) {
             }, { keywords: [], phrases: [] });
 
         await Promise.all([
-            fs.writeFile(path.join(outputDir, `keywords_${timestamp}.txt`), keywords.join('\n')),
-            fs.writeFile(path.join(outputDir, `phrases_${timestamp}.txt`), phrases.join('\n'))
+            fs.writeFile(path.join(domainOutputDir, `keywords_${timestamp}.txt`), keywords.join('\n')),
+            fs.writeFile(path.join(domainOutputDir, `phrases_${timestamp}.txt`), phrases.join('\n'))
         ]);
 
         if (keywords.length > 0) {
             randomKeyword = keywords[Math.floor(Math.random() * keywords.length)];
             const article = await generateArticle(randomKeyword);
             const safeFileName = randomKeyword.replace(/[^a-z0-9]/gi, '_').toLowerCase();
-            await fs.writeFile(path.join(outputDir, `${safeFileName}_${timestamp}.txt`), article);
+            await fs.writeFile(path.join(domainOutputDir, `${safeFileName}_${timestamp}.txt`), article);
         }
 
         return {
             domain,
-            outputDir,
+            outputDir: domainOutputDir,
             keywordCount: keywords.length,
             phraseCount: phrases.length,
             processedKeyword: randomKeyword
@@ -105,6 +127,7 @@ async function processSitemap(sitemapUrl) {
     }
 }
 
+// Generate an article using OpenAI GPT-3.5
 async function generateArticle(keyword) {
     const maxRetries = 3;
     let attempts = 0;
@@ -133,6 +156,7 @@ async function generateArticle(keyword) {
     }
 }
 
+// Main function to orchestrate the entire process
 async function main() {
     const sitemaps = await fs.readFile('sitemaps.txt', 'utf-8');
     const sitemapUrls = sitemaps.split('\n').filter(url => url.trim());
@@ -198,6 +222,7 @@ async function main() {
     console.log(`\nAll processing complete. ${totalArticles} articles generated. See output folders for details.`);
 }
 
+// Check if the script is running in the main thread or as a worker
 if (!isMainThread) {
     processSitemap(workerData)
         .then(result => parentPort.postMessage(result))
