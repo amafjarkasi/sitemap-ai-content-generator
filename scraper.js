@@ -9,6 +9,24 @@ const cliProgress = require('cli-progress');
 const colors = require('colors');
 const config = require('./config');
 
+const exclusionFilePath = 'exclusions.txt'; // Path to the exclusion file
+
+async function readExclusionFile() {
+    try {
+        await fs.access(exclusionFilePath);
+        const data = await fs.readFile(exclusionFilePath, 'utf-8');
+        return data.split('\n').map(word => word.trim()).filter(word => word.length > 0);
+    } catch (error) {
+        if (error.code === 'ENOENT') {
+            console.warn(`Exclusion file not found: ${exclusionFilePath}. No keywords will be excluded.`);
+            return [];
+        } else {
+            console.error(`Error reading exclusion file: ${error.message}`);
+            return [];
+        }
+    }
+}
+
 // Ensure OpenAI API key is set
 if (!process.env.OPENAI_API_KEY) {
     throw new Error('OpenAI API key is not set. Please set it in the .env file.');
@@ -61,7 +79,7 @@ function containsStateAbbreviation(phrase) {
 }
 
 // Process a sitemap URL and extract keywords and phrases
-async function processSitemap(sitemapUrl) {
+async function processSitemap(sitemapUrl, excludedKeywords) {
     const domain = new URL(sitemapUrl).hostname;
     const timestamp = getTimestamp();
     const domainOutputDir = path.join(outputDir, `${domain}_${timestamp}`);
@@ -95,9 +113,9 @@ async function processSitemap(sitemapUrl) {
             })
             .filter(text => text.length > 0)
             .reduce((acc, phrase) => {
-                if (containsStateAbbreviation(phrase) && isValidKeyword(phrase)) {
+                if (containsStateAbbreviation(phrase) && isValidKeyword(phrase) && !excludedKeywords.includes(phrase)) {
                     acc.keywords.push(phrase);
-                } else if (!containsStateAbbreviation(phrase) && isValidKeyword(phrase)) {
+                } else if (!containsStateAbbreviation(phrase) && isValidKeyword(phrase) && !excludedKeywords.includes(phrase)) {
                     acc.phrases.push(phrase);
                 }
                 return acc;
@@ -158,6 +176,7 @@ async function generateArticle(keyword) {
 
 // Main function to orchestrate the entire process
 async function main() {
+    const excludedKeywords = await readExclusionFile();
     const sitemaps = await fs.readFile('sitemaps.txt', 'utf-8');
     const sitemapUrls = sitemaps.split('\n').filter(url => url.trim());
     const workers = new Map();
@@ -176,7 +195,7 @@ async function main() {
         progressBar.start(100, 0);
         progressBars.set(domain, progressBar);
 
-        const worker = new Worker(__filename, { workerData: sitemapUrl });
+        const worker = new Worker(__filename, { workerData: { sitemapUrl, excludedKeywords } });
         workers.set(worker, sitemapUrl);
 
         worker.on('message', result => {
@@ -224,7 +243,8 @@ async function main() {
 
 // Check if the script is running in the main thread or as a worker
 if (!isMainThread) {
-    processSitemap(workerData)
+    const { sitemapUrl, excludedKeywords } = workerData;
+    processSitemap(sitemapUrl, excludedKeywords)
         .then(result => parentPort.postMessage(result))
         .catch(error => parentPort.postMessage({ error: error.message }));
 } else {

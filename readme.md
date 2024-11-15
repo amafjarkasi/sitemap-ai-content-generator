@@ -15,6 +15,7 @@ A powerful Node.js tool that scrapes sitemaps, extracts keywords, and generates 
 - 📊 Real-time progress visualization
 - 🔄 Automatic rate limiting and retries
 - 📁 Organized output with timestamps
+- 🛠️ Keyword exclusion using an exclusion file
 
 ## Prerequisites
 
@@ -92,6 +93,16 @@ For each processed sitemap, creates a directory `output/{domain}_{timestamp}/` c
 - `summary_{timestamp}.txt` - Processing summary
 
 These changes will allow users to specify a custom output directory and improve the overall functionality and usability of the script.
+
+## Exclusion File
+
+Create an `exclusions.txt` file with keywords to exclude (one per line):
+
+```txt
+keyword1
+keyword2
+keyword3
+```
 
 ## Functions
 
