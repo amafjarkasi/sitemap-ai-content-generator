@@ -10,7 +10,7 @@ A powerful Node.js tool that scrapes sitemaps, extracts keywords, and generates 
 ## Features
 
 - ⚡️ Multi-threaded processing with Worker Threads
-- 🎯 Location-specific keyword extraction (NJ focus)
+- 🎯 Location-specific keyword extraction (supports multiple state abbreviations)
 - ✍️ AI-powered content generation
 - 📊 Real-time progress visualization
 - 🔄 Automatic rate limiting and retries

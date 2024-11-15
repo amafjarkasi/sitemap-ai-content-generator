@@ -7,13 +7,15 @@ const { Worker, isMainThread, parentPort, workerData } = require('worker_threads
 const { URL } = require('url');
 const cliProgress = require('cli-progress');
 const colors = require('colors');
+const config = require('./config');
 
 const openai = new OpenAI({
     apiKey: process.env.OPENAI_API_KEY
 });
 
-const MAX_WORKERS = 3;
-const RATE_LIMIT_DELAY = 1000;
+const MAX_WORKERS = config.MAX_WORKERS;
+const RATE_LIMIT_DELAY = config.RATE_LIMIT_DELAY;
+const stateAbbreviations = config.STATE_ABBREVIATIONS;
 
 function getTimestamp() {
     return new Date().toISOString().replace(/[:.]/g, '-');
@@ -31,6 +33,10 @@ function createProgressBar(domain) {
 function isValidKeyword(keyword) {
     const words = keyword.split(' ').filter(word => word.trim());
     return words.length >= 2;
+}
+
+function containsStateAbbreviation(phrase) {
+    return stateAbbreviations.some(state => phrase.endsWith(state));
 }
 
 async function processSitemap(sitemapUrl) {
@@ -57,7 +63,7 @@ async function processSitemap(sitemapUrl) {
                     .filter(word => word.trim().length > 0);
                 
                 const transformedWords = words.map((word, index) => {
-                    if (index === words.length - 1 && word.toLowerCase() === 'nj') {
+                    if (index === words.length - 1 && stateAbbreviations.includes(word.toUpperCase())) {
                         return word.toUpperCase();
                     }
                     return word.charAt(0).toUpperCase() + word.slice(1).toLowerCase();
@@ -67,9 +73,9 @@ async function processSitemap(sitemapUrl) {
             })
             .filter(text => text.length > 0)
             .reduce((acc, phrase) => {
-                if (phrase.endsWith('NJ') && isValidKeyword(phrase)) {
+                if (containsStateAbbreviation(phrase) && isValidKeyword(phrase)) {
                     acc.keywords.push(phrase);
-                } else if (!phrase.endsWith('NJ') && isValidKeyword(phrase)) {
+                } else if (!containsStateAbbreviation(phrase) && isValidKeyword(phrase)) {
                     acc.phrases.push(phrase);
                 }
                 return acc;
