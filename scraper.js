@@ -7,60 +7,21 @@ const { Worker, isMainThread, parentPort, workerData } = require('worker_threads
 const { URL } = require('url');
 const cliProgress = require('cli-progress');
 const colors = require('colors');
-const config = require('./config');
-const yargs = require('yargs/yargs');
-const { hideBin } = require('yargs/helpers');
-const argv = yargs(hideBin(process.argv)).argv;
+const { MAX_WORKERS, RATE_LIMIT_DELAY } = require('./config');
 
-const exclusionFilePath = 'exclusions.txt'; // Path to the exclusion file
-
-async function readExclusionFile() {
-    try {
-        await fs.access(exclusionFilePath);
-        const data = await fs.readFile(exclusionFilePath, 'utf-8');
-        return data.split('\n').map(word => word.trim()).filter(word => word.length > 0);
-    } catch (error) {
-        if (error.code === 'ENOENT') {
-            console.warn(`Exclusion file not found: ${exclusionFilePath}. No keywords will be excluded.`);
-            return [];
-        } else {
-            console.error(`Error reading exclusion file: ${error.message}`);
-            return [];
-        }
-    }
-}
-
-// Ensure OpenAI API key is set
 if (!process.env.OPENAI_API_KEY) {
-    throw new Error('OpenAI API key is not set. Please set it in the .env file.');
+    console.error('OPENAI_API_KEY environment variable is not set');
+    process.exit(1);
 }
 
 const openai = new OpenAI({
     apiKey: process.env.OPENAI_API_KEY
 });
 
-const MAX_WORKERS = config.MAX_WORKERS;
-const RATE_LIMIT_DELAY = config.RATE_LIMIT_DELAY;
-const stateAbbreviations = config.STATE_ABBREVIATIONS;
-const outputDir = argv.outputDir || config.OUTPUT_DIR;
-
-// Validate configuration values
-if (typeof MAX_WORKERS !== 'number' || MAX_WORKERS <= 0) {
-    throw new Error('Invalid MAX_WORKERS value in config.js');
-}
-if (typeof RATE_LIMIT_DELAY !== 'number' || RATE_LIMIT_DELAY <= 0) {
-    throw new Error('Invalid RATE_LIMIT_DELAY value in config.js');
-}
-if (!Array.isArray(stateAbbreviations) || stateAbbreviations.length === 0) {
-    throw new Error('Invalid STATE_ABBREVIATIONS value in config.js');
-}
-
-// Generate a timestamp for file naming
 function getTimestamp() {
     return new Date().toISOString().replace(/[:.]/g, '-');
 }
 
-// Create a progress bar for a given domain
 function createProgressBar(domain) {
     return new cliProgress.SingleBar({
         format: colors.magenta(`${domain} |{bar}| {percentage}%`),
@@ -70,85 +31,85 @@ function createProgressBar(domain) {
     }, cliProgress.Presets.shades_classic);
 }
 
-// Validate if a keyword is valid (at least two words)
 function isValidKeyword(keyword) {
     const words = keyword.split(' ').filter(word => word.trim());
     return words.length >= 2;
 }
 
-// Check if a phrase contains a state abbreviation
-function containsStateAbbreviation(phrase) {
-    return stateAbbreviations.some(state => phrase.endsWith(state));
-}
-
-// Process a sitemap URL and extract keywords and phrases
-async function processSitemap(sitemapUrl, excludedKeywords) {
-    const domain = new URL(sitemapUrl).hostname;
-    const timestamp = getTimestamp();
-    const domainOutputDir = path.join(outputDir, `${domain}_${timestamp}`);
-    let randomKeyword = 'None';
+async function processSitemap(sitemapUrl) {
+    const maxRetries = 3;
+    let attempts = 0;
     
-    try {
-        await fs.mkdir(domainOutputDir, { recursive: true });
-        
-        const response = await axios.get(sitemapUrl);
-        const parser = new xml2js.Parser();
-        const result = await parser.parseStringPromise(response.data);
-        
-        const { keywords, phrases } = result.urlset.url
-            .map(urlEntry => urlEntry.loc[0])
-            .filter(url => !/(blog|blogs|blogging|blog-post|blog-posts)/i.test(url))
-            .map(url => {
-                const withoutDomain = url.replace(/^https?:\/\/[^\/]+/, '');
-                const withoutSlashes = withoutDomain.replace(/^\/|\/$/g, '').replace(/\.html$|\.php$/g, '');
-                const words = withoutSlashes.replace(/-/g, ' ')
-                    .split(' ')
-                    .filter(word => word.trim().length > 0);
-                
-                const transformedWords = words.map((word, index) => {
-                    if (index === words.length - 1 && stateAbbreviations.includes(word.toUpperCase())) {
-                        return word.toUpperCase();
+    while (attempts < maxRetries) {
+        try {
+            const domain = new URL(sitemapUrl).hostname;
+            const timestamp = getTimestamp();
+            const outputDir = path.join('output', `${domain}_${timestamp}`);
+            let randomKeyword = 'None';
+            
+            await fs.mkdir(outputDir, { recursive: true });
+            
+            const response = await axios.get(sitemapUrl);
+            const parser = new xml2js.Parser();
+            const result = await parser.parseStringPromise(response.data);
+            
+            const { keywords, phrases } = result.urlset.url
+                .map(urlEntry => urlEntry.loc[0])
+                .filter(url => !/(blog|blogs|blogging|blog-post|blog-posts)/i.test(url))
+                .map(url => {
+                    const withoutDomain = url.replace(/^https?:\/\/[^\/]+/, '');
+                    const withoutSlashes = withoutDomain.replace(/^\/|\/$/g, '').replace(/\.html$|\.php$/g, '');
+                    const words = withoutSlashes.replace(/-/g, ' ')
+                        .split(' ')
+                        .filter(word => word.trim().length > 0);
+                    
+                    const transformedWords = words.map((word, index) => {
+                        if (index === words.length - 1 && word.toLowerCase() === 'nj') {
+                            return word.toUpperCase();
+                        }
+                        return word.charAt(0).toUpperCase() + word.slice(1).toLowerCase();
+                    });
+                    
+                    return transformedWords.join(' ');
+                })
+                .filter(text => text.length > 0)
+                .reduce((acc, phrase) => {
+                    if (phrase.endsWith('NJ') && isValidKeyword(phrase)) {
+                        acc.keywords.push(phrase);
+                    } else if (!phrase.endsWith('NJ') && isValidKeyword(phrase)) {
+                        acc.phrases.push(phrase);
                     }
-                    return word.charAt(0).toUpperCase() + word.slice(1).toLowerCase();
-                });
-                
-                return transformedWords.join(' ');
-            })
-            .filter(text => text.length > 0)
-            .reduce((acc, phrase) => {
-                if (containsStateAbbreviation(phrase) && isValidKeyword(phrase) && !excludedKeywords.includes(phrase)) {
-                    acc.keywords.push(phrase);
-                } else if (!containsStateAbbreviation(phrase) && isValidKeyword(phrase) && !excludedKeywords.includes(phrase)) {
-                    acc.phrases.push(phrase);
-                }
-                return acc;
-            }, { keywords: [], phrases: [] });
+                    return acc;
+                }, { keywords: [], phrases: [] });
 
-        await Promise.all([
-            fs.writeFile(path.join(domainOutputDir, `keywords_${timestamp}.txt`), keywords.join('\n')),
-            fs.writeFile(path.join(domainOutputDir, `phrases_${timestamp}.txt`), phrases.join('\n'))
-        ]);
+            await Promise.all([
+                fs.writeFile(path.join(outputDir, `keywords_${timestamp}.txt`), keywords.join('\n')),
+                fs.writeFile(path.join(outputDir, `phrases_${timestamp}.txt`), phrases.join('\n'))
+            ]);
 
-        if (keywords.length > 0) {
-            randomKeyword = keywords[Math.floor(Math.random() * keywords.length)];
-            const article = await generateArticle(randomKeyword);
-            const safeFileName = randomKeyword.replace(/[^a-z0-9]/gi, '_').toLowerCase();
-            await fs.writeFile(path.join(domainOutputDir, `${safeFileName}_${timestamp}.txt`), article);
+            if (keywords.length > 0) {
+                randomKeyword = keywords[Math.floor(Math.random() * keywords.length)];
+                const article = await generateArticle(randomKeyword);
+                const safeFileName = randomKeyword.replace(/[^a-z0-9]/gi, '_').toLowerCase();
+                await fs.writeFile(path.join(outputDir, `${safeFileName}_${timestamp}.txt`), article);
+            }
+
+            return {
+                domain,
+                outputDir,
+                keywordCount: keywords.length,
+                phraseCount: phrases.length,
+                processedKeyword: randomKeyword
+            };
+        } catch (error) {
+            attempts++;
+            console.error(`Attempt ${attempts} failed for ${sitemapUrl}: ${error.message}`);
+            if (attempts === maxRetries) throw error;
+            await new Promise(resolve => setTimeout(resolve, RATE_LIMIT_DELAY * attempts));
         }
-
-        return {
-            domain,
-            outputDir: domainOutputDir,
-            keywordCount: keywords.length,
-            phraseCount: phrases.length,
-            processedKeyword: randomKeyword
-        };
-    } catch (error) {
-        throw new Error(`Error processing ${domain}: ${error.message}`);
     }
 }
 
-// Generate an article using OpenAI GPT-3.5
 async function generateArticle(keyword) {
     const maxRetries = 3;
     let attempts = 0;
@@ -177,11 +138,20 @@ async function generateArticle(keyword) {
     }
 }
 
-// Main function to orchestrate the entire process
 async function main() {
-    const excludedKeywords = await readExclusionFile();
     const sitemaps = await fs.readFile('sitemaps.txt', 'utf-8');
-    const sitemapUrls = sitemaps.split('\n').filter(url => url.trim());
+    const sitemapUrls = sitemaps
+        .split('\n')
+        .filter(url => url.trim())
+        .filter(url => {
+            try {
+                new URL(url);
+                return true;
+            } catch {
+                console.error(`Invalid URL: ${url}`);
+                return false;
+            }
+        });
     const workers = new Map();
     const results = [];
     const progressBars = new Map();
@@ -198,7 +168,7 @@ async function main() {
         progressBar.start(100, 0);
         progressBars.set(domain, progressBar);
 
-        const worker = new Worker(__filename, { workerData: { sitemapUrl, excludedKeywords } });
+        const worker = new Worker(__filename, { workerData: sitemapUrl });
         workers.set(worker, sitemapUrl);
 
         worker.on('message', result => {
@@ -219,15 +189,18 @@ async function main() {
 
         worker.on('exit', () => {
             workers.delete(worker);
-            progressBars.get(domain).stop();
+            const progressBar = progressBars.get(domain);
+            progressBar.stop();
+            progressBars.delete(domain);
         });
 
         await new Promise(resolve => setTimeout(resolve, RATE_LIMIT_DELAY));
     }
 
-    while (workers.size > 0) {
-        await new Promise(resolve => setTimeout(resolve, 100));
-    }
+    const workerPromises = Array.from(workers.keys()).map(worker => 
+        new Promise(resolve => worker.on('exit', resolve))
+    );
+    await Promise.allSettled(workerPromises);
 
     const timestamp = getTimestamp();
     const summaries = results.map(r => 
@@ -244,12 +217,18 @@ async function main() {
     console.log(`\nAll processing complete. ${totalArticles} articles generated. See output folders for details.`);
 }
 
-// Check if the script is running in the main thread or as a worker
 if (!isMainThread) {
-    const { sitemapUrl, excludedKeywords } = workerData;
-    processSitemap(sitemapUrl, excludedKeywords)
+    processSitemap(workerData)
         .then(result => parentPort.postMessage(result))
         .catch(error => parentPort.postMessage({ error: error.message }));
 } else {
     main().catch(console.error);
+
+    process.on('SIGINT', () => {
+        console.log('\nGracefully shutting down...');
+        for (const worker of workers.keys()) {
+            worker.terminate();
+        }
+        process.exit(0);
+    });
 }
