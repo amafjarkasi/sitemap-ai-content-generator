@@ -1,4 +1,4 @@
-# Sitemap Content Generator
+# Sitemap AI Content Generator
 ![License](https://img.shields.io/badge/license-MIT-blue.svg)
 ![Node](https://img.shields.io/badge/node-%3E%3D14-green.svg)
 
